@@ -1,0 +1,310 @@
+﻿@page "/train"
+@using System.Text.RegularExpressions
+@using System.Text.Json
+
+<MudPaper Elevation="0">
+	<MudToolBar Class="px-0">
+		<MudItem>
+			<MudText Typo="Typo.h6">Markov</MudText>
+		</MudItem>
+		<MudSpacer></MudSpacer>
+		<MudItem>
+			<MudIconButton Href="/" Icon="@Icons.Material.Filled.Chat"></MudIconButton>
+		</MudItem>
+	</MudToolBar>
+</MudPaper>
+
+<MudPaper Class="mb-4" Elevation="0">
+	<MudText Typo="Typo.body1" Class="fw-bold">Train your own model</MudText>
+</MudPaper>
+
+<MudDivider Class="mb-4"></MudDivider>
+
+<MudPaper Elevation="0" Class="mb-4">
+	<MudText Typo="Typo.body1" Class="mb-4">Please select all the text files that you would like to train the model on.</MudText>
+
+	<MudText Typo="Typo.caption" Class="mb-4">
+		In case you do not have any text files to train the model on, you can visit
+		<MudLink Href="https://www.gutenberg.org/" Typo="Typo.caption">Project Gutenberg</MudLink>
+		for free eBooks. For now, you can use
+		<MudLink Href="https://www.gutenberg.org/cache/epub/790/pg790.txt" Typo="Typo.caption">Lady Windermere's Fan</MudLink>
+		to get your model training started.<br /><br />
+	</MudText>
+
+	<MudFileUpload T="IReadOnlyList<IBrowserFile>" FilesChanged="UploadDatasetFiles" Accept="text/plain" Class="mb-4">
+		<ActivatorContent>
+			<MudButton FullWidth DropShadow=false StartIcon="@Icons.Material.Filled.FileOpen" Variant="Variant.Filled">Select Text Files</MudButton>
+		</ActivatorContent>
+	</MudFileUpload>
+
+	@if (datasetTextFiles.Count == 0)
+	{
+		<MudText Typo="Typo.caption" Class="mb-4">No files selected</MudText>
+	}
+	else
+	{
+		<MudChipSet T="IBrowserFile" Class="mb-4" AllClosable OnClose="RemoveDatasetFile">
+			@foreach (IBrowserFile file in datasetTextFiles)
+			{
+				<MudChip Text="@file.Name"></MudChip>
+			}
+		</MudChipSet>
+	}
+</MudPaper>
+
+<MudDivider Class="mb-4"></MudDivider>
+
+<MudPaper Elevation="0" Class="mb-4">
+	<MudTextField @bind-Value="ngram" Label="N-Grams" InputType="InputType.Number" Margin="Margin.Dense" Variant="Variant.Outlined" HelperText="If you do not know what N-Grams is, leave it to it's default value of 2." Class="mb-4"></MudTextField>
+
+	<MudButton OnClick="StartMarkov" StartIcon="@Icons.Material.Filled.ModelTraining" FullWidth Variant="Variant.Filled" DropShadow=false>Start Training</MudButton>
+</MudPaper>
+
+<MudDivider Class="mb-4"></MudDivider>
+
+<MudPaper Elevation="0" Class="mb-4">
+	<MudTimeline TimelineAlign="TimelineAlign.Start" TimelineOrientation="TimelineOrientation.Vertical" TimelinePosition="TimelinePosition.Left">
+		<MudTimelineItem Color="@startMarkovColor" Elevation="0">
+			<MudText Typo="Typo.body1">Start Markov</MudText>
+			@foreach (string log in markovLogs)
+			{
+				<MudText Typo="Typo.caption">@log<br /></MudText>
+			}
+		</MudTimelineItem>
+
+		<MudTimelineItem Color="@readDatasetFilesColor" Elevation="0">
+			<MudText Typo="Typo.body1">Read Dataset File(s)</MudText>
+			@foreach (string log in readDatasetFilesLogs)
+			{
+				<MudText Typo="Typo.caption">@log<br /></MudText>
+			}
+		</MudTimelineItem>
+
+		<MudTimelineItem Color="@parseDatasetColor" Elevation="0">
+			<MudText Typo="Typo.body1">Parse Dataset File(s)</MudText>
+			@foreach (string log in parseDatasetLogs)
+			{
+				<MudText Typo="Typo.caption">@log<br /></MudText>
+			}
+		</MudTimelineItem>
+
+		<MudTimelineItem Color="@preprocessColor" Elevation="0">
+			<MudText Typo="Typo.body1">Preprocess</MudText>
+			@foreach (string log in preprocessLogs)
+			{
+				<MudText Typo="Typo.caption">@log<br /></MudText>
+			}
+		</MudTimelineItem>
+
+		<MudTimelineItem Color="@trainColor" Elevation="0">
+			<MudText Typo="Typo.body1">Train Model</MudText>
+			@foreach (string log in trainLogs)
+			{
+				<MudText Typo="Typo.caption">@log<br /></MudText>
+			}
+		</MudTimelineItem>
+	</MudTimeline>
+</MudPaper>
+
+<MudDivider Class="mb-4"></MudDivider>
+
+<MudPaper Elevation="0" Class="mb-4">
+	<MudButton OnClick="SaveModelToJson" FullWidth Variant="Variant.Filled" DropShadow=false StartIcon="@Icons.Material.Filled.Save" Class="mb-4">Save Model</MudButton>
+	<MudText Typo="Typo.caption">Due to certain Android restrictions, currently the model will not directly be saved to your device. Instead, you can maybe share it to yourself and save it from there.</MudText>
+</MudPaper>
+
+@code
+{
+	IList<IBrowserFile> datasetTextFiles = new List<IBrowserFile>();
+	List<string> markovLogs = new List<string>(), readDatasetFilesLogs = new List<string>(), parseDatasetLogs = new List<string>(), preprocessLogs = new List<string>(), trainLogs = new List<string>();
+	Color startMarkovColor = Color.Default, readDatasetFilesColor = Color.Default, parseDatasetColor = Color.Default, preprocessColor = Color.Default, trainColor = Color.Default;
+	List<string> datasetWords = new List<string>(), vocabulary = new List<string>();
+	List<List<string>> X = new List<List<string>>();
+	List<string> Y = new List<string>();
+	int ngram = 2;
+	Dictionary<string, Dictionary<string, int>> frequencies = new Dictionary<string, Dictionary<string, int>>();
+	Dictionary<string, string> markov = new Dictionary<string, string>();
+
+	private async Task StartMarkov()
+	{
+		markovLogs = new List<string>();
+		readDatasetFilesLogs = new List<string>();
+		parseDatasetLogs = new List<string>();
+		preprocessLogs = new List<string>();
+		trainLogs = new List<string>();
+
+		startMarkovColor = Color.Default;
+		readDatasetFilesColor = Color.Default;
+		parseDatasetColor = Color.Default;
+		preprocessColor = Color.Default;
+		trainColor = Color.Default;
+
+		datasetWords = new List<string>();
+		vocabulary = new List<string>();
+		X = new List<List<string>>();
+		Y = new List<string>();
+		frequencies = new Dictionary<string, Dictionary<string, int>>();
+		markov = new Dictionary<string, string>();
+
+		markovLogs.Add("Started Markov");
+		startMarkovColor = Color.Success;
+
+		if (await ReadDatasetFiles() == false) return;
+		if (await ParseDataset() == false) return;
+		if (await PreprocessDataset() == false) return;
+		if (await Train() == false) return;
+	}
+
+	private async Task<bool> ReadDatasetFiles()
+	{
+		readDatasetFilesColor = Color.Primary;
+
+		int datasetTextFilesCount = datasetTextFiles.Count;
+
+		if (datasetTextFilesCount == 0)
+		{
+			readDatasetFilesLogs.Add("You have not selected any text files. Please select atleast 1 text file for training.");
+			readDatasetFilesColor = Color.Error;
+			return false;
+		}
+		else
+		{
+			readDatasetFilesLogs.Add($"Found {datasetTextFilesCount} text files.");
+		}
+
+		foreach (IBrowserFile file in datasetTextFiles)
+		{
+			readDatasetFilesLogs.Add($"Reading {file.Name}");
+
+			using var stream = file.OpenReadStream();
+			using var reader = new StreamReader(stream);
+			string? line;
+			long wordCount = 0;
+
+			while ((line = await reader.ReadLineAsync()) != null)
+			{
+				var words = Regex.Replace(line.ToLowerInvariant(), @"[^\w\s]", "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+				foreach (var word in words)
+				{
+					datasetWords.Add(word);
+					wordCount++;
+				}
+			}
+
+			readDatasetFilesLogs.Add($"Found {wordCount} words in {file.Name}");
+		}
+
+		readDatasetFilesLogs.Add($"Created a corpus of {datasetWords.Count} words");
+		readDatasetFilesColor = Color.Success;
+		return true;
+	}
+
+	private async Task<bool> ParseDataset()
+	{
+		parseDatasetColor = Color.Primary;
+		parseDatasetLogs.Add("Started Parsing Dataset");
+
+		vocabulary = datasetWords.Distinct().OrderBy(word => word).ToList();
+		parseDatasetLogs.Add($"Created a vocabulary of {vocabulary.Count} words");
+
+		parseDatasetColor = Color.Success;
+		return true;
+	}
+
+	private async Task<bool> PreprocessDataset()
+	{
+		preprocessColor = Color.Primary;
+		preprocessLogs.Add("Started Preprocessing dataset");
+
+		preprocessLogs.Add("Creating X and y");
+
+		for (int i = 0; i < datasetWords.Count - ngram; i++)
+		{
+			var sequence = datasetWords.Skip(i).Take(ngram).ToList();
+			X.Add(sequence);
+			Y.Add(datasetWords[i + ngram]);
+		}
+
+		preprocessLogs.Add($"Generated {X.Count} input sequences of {ngram} words each.");
+		preprocessLogs.Add("Sample X and Y:");
+
+		for (int i = 0; i < 3 && i < X.Count; i++)
+		{
+			preprocessLogs.Add($"{i + 1}) {String.Join(" ", X[i])} -> {Y[i]}");
+		}
+
+		preprocessColor = Color.Success;
+		return true;
+	}
+
+	private async Task<bool> Train()
+	{
+		trainColor = Color.Primary;
+		trainLogs.Add("Model Training Started");
+
+		for (int i = 0; i < X.Count; i++)
+		{
+			string x = String.Join(" ", X[i]);
+			string y = Y[i];
+
+			if (!frequencies.ContainsKey(x))
+			{
+				frequencies[x] = new Dictionary<string, int>();
+			}
+
+			if (!frequencies[x].TryAdd(y, 1))
+			{
+				frequencies[x][y]++;
+			}
+		}
+
+		foreach (var entry in frequencies)
+		{
+			string inputSequence = entry.Key;
+			var nextWords = entry.Value;
+
+			var mostFrequent = nextWords.OrderByDescending(kvp => kvp.Value).FirstOrDefault();
+
+			if (!string.IsNullOrEmpty(mostFrequent.Key))
+			{
+				markov[inputSequence] = mostFrequent.Key;
+			}
+		}
+
+		trainLogs.Add("Model Training Finished");
+		trainColor = Color.Success;
+
+		return true;
+	}
+
+	private async Task SaveModelToJson()
+	{
+		string jsonString = JsonSerializer.Serialize(markov, new JsonSerializerOptions { WriteIndented = true });
+		string fileName = "markov.json";
+		string filePath = Path.Combine(FileSystem.AppDataDirectory, fileName);
+
+		await File.WriteAllTextAsync(filePath, jsonString);
+		await Share.RequestAsync(new ShareFileRequest
+			{
+				Title = "Save Markov",
+				File = new ShareFile(filePath)
+			});
+	}
+
+	private void UploadDatasetFiles(IReadOnlyList<IBrowserFile> files)
+	{
+		foreach (var file in files)
+		{
+			if (!datasetTextFiles.Any(f => f.Name == file.Name))
+			{
+				datasetTextFiles.Add(file);
+			}
+		}
+	}
+
+	private void RemoveDatasetFile(MudChip<IBrowserFile> chip)
+	{
+		datasetTextFiles = datasetTextFiles.Where(x => x.Name != chip.Text).ToList();
+	}
+}

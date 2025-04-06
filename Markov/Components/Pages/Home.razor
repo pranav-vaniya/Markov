@@ -1,0 +1,163 @@
+﻿@page "/"
+@using Markov.Models
+@using System.Text.Json
+@inject HttpClient Http
+@using System.Text.RegularExpressions
+
+<MudPaper Elevation="0">
+	<MudToolBar Class="px-0">
+		<MudItem>
+			<MudText Typo="Typo.h6">Markov</MudText>
+		</MudItem>
+		<MudSpacer></MudSpacer>
+		<MudItem>
+			<MudIconButton Href="/train" Icon="@Icons.Material.Filled.ModelTraining"></MudIconButton>
+		</MudItem>
+		<MudItem>
+			<MudIconButton OnClick="ToggleIsSettingsOpen" Icon="@Icons.Material.Filled.Settings"></MudIconButton>
+		</MudItem>
+	</MudToolBar>
+</MudPaper>
+
+@if (isSettingsOpen)
+{
+	<MudPaper Class="mb-4 border pa-4" Elevation="0">
+		<MudText Typo="Typo.body1" Class="fw-bold mb-4">Settings</MudText>
+
+		<MudTextField @bind-Value="numberOfWordsToGenerate" Variant="Variant.Outlined" Label="Number of Words to be Generated" Margin="Margin.Dense" Immediate Class="mb-4"></MudTextField>
+
+		<MudButton OnClick="ToggleIsSettingsOpen" FullWidth Variant="Variant.Filled" DropShadow=false StartIcon="@Icons.Material.Filled.Close">Close Settings</MudButton>
+	</MudPaper>
+
+	<MudDivider Class="mb-4"></MudDivider>
+}
+
+<MudPaper Elevation="0" Class="mb-4">
+	@if (conversation.Messages.Count == 0)
+	{
+		<MudText Typo="Typo.body2" Align="Align.Center">Send a message to start a conversation.</MudText>
+	}
+	else
+	{
+		foreach (Message message in conversation.Messages)
+		{
+			ChatBubblePosition chatBubblePosition;
+			string avatar;
+
+			if ((Sender)message.Sender == Sender.Markov)
+			{
+				chatBubblePosition = ChatBubblePosition.Start;
+				avatar = "images/markov_avatar.jpg";
+			}
+			else
+			{
+				chatBubblePosition = ChatBubblePosition.End;
+				avatar = "images/luffy_avatar.jpg";
+			}
+
+			<MudChat ChatPosition=@chatBubblePosition>
+				<MudAvatar>
+					<MudImage Src=@avatar></MudImage>
+				</MudAvatar>
+				<MudChatBubble>
+					@message.Content
+				</MudChatBubble>
+			</MudChat>
+		}
+
+		if (isMarkovThinking)
+		{
+			<MudChat ChatPosition="ChatBubblePosition.Start">
+				<MudAvatar>
+					<MudImage Src="images/markov_avatar.jpg"></MudImage>
+				</MudAvatar>
+				<MudChatBubble>
+					<MudSkeleton Width="32px"></MudSkeleton>
+				</MudChatBubble>
+			</MudChat>
+		}
+	}
+</MudPaper>
+
+<MudPaper Elevation="0" Class="mb-4">
+	<MudTextField @bind-Value="userInput" OnAdornmentClick="AcceptUserInput" Immediate Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.Send" AdornmentColor="Color.Success" Placeholder="Under the" Variant="Variant.Outlined" Margin="Margin.Dense" AutoGrow></MudTextField>
+</MudPaper>
+
+@code {
+	bool isSettingsOpen = false, isMarkovThinking = false;
+	string userInput = string.Empty;
+	int numberOfWordsToGenerate = 10;
+	Conversation conversation = new Conversation();
+	MarkovModel markovModel = new MarkovModel();
+	Dictionary<string, string> markov = new Dictionary<string, string>();
+
+	async Task AcceptUserInput()
+	{
+		conversation.Messages.Add(new Message { Sender = (int)Sender.User, Content = userInput });
+
+		isMarkovThinking = true;
+		string response = await GenerateResponse();
+		isMarkovThinking = false;
+
+		userInput = string.Empty;
+		conversation.Messages.Add(new Message { Sender = (int)Sender.Markov, Content = response });
+	}
+
+	async Task<string> GenerateResponse()
+	{
+		List<string> result = new List<string>();
+
+		List<string> userInputWords = Regex
+			.Replace(userInput.ToLowerInvariant(), @"[^\w\s]", "")
+			.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+			.ToList();
+
+		List<string> lastTwoUserInputWords;
+		if (userInputWords.Count >= 2)
+		{
+			lastTwoUserInputWords = userInputWords
+				.Skip(userInputWords.Count - 2)
+				.ToList();
+		}
+		else if (userInputWords.Count == 1)
+		{
+			lastTwoUserInputWords = new List<string> { "the", userInputWords[0] };
+		}
+		else
+		{
+			lastTwoUserInputWords = new List<string> { "of", "the" };
+		}
+
+		for (int i = 0; i < numberOfWordsToGenerate; i++)
+		{
+			string key = string.Join(" ", lastTwoUserInputWords);
+
+			if (!markov.TryGetValue(key, out string nextWord))
+			{
+				nextWord = "the";
+			}
+
+			result.Add(nextWord);
+
+			lastTwoUserInputWords = new List<string> { lastTwoUserInputWords[1], nextWord };
+		}
+
+		return string.Join(" ", result);
+	}
+
+	protected override async Task OnInitializedAsync()
+	{
+		markov = markovModel.Markov;
+	}
+
+	enum Sender
+	{
+		Markov = 0,
+		User = 1
+	}
+
+	void ToggleIsSettingsOpen()
+	{
+		isSettingsOpen = !isSettingsOpen;
+	}
+}
